@@ -43,9 +43,9 @@ INSTALLED_APPS = [
     "rest_framework.authtoken",
     "drf_spectacular",
     "books",
+    "users",
     "borrowings",
     "payments",
-    "users",
 ]
 
 MIDDLEWARE = [
@@ -108,6 +108,8 @@ AUTH_PASSWORD_VALIDATORS = [
 
 AUTH_USER_MODEL = "users.User"
 
+LOGIN_REDIRECT_URL = "/api/books/"
+
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/
 
@@ -132,7 +134,12 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+        "rest_framework.authentication.BasicAuthentication",
     ),
+    "DEFAULT_PERMISSION_CLASSES": [
+        "books.permissions.IsAdminOrReadOnly",
+    ],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
