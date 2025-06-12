@@ -3,6 +3,7 @@ from django.conf import settings
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
+
 def create_stripe_checkout_session(payment):
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
