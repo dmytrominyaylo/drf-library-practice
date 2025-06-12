@@ -41,18 +41,6 @@ def send_notification(message: str):
         logging.error(f"Failed to send Telegram message: {e}")
 
 
-def borrowing_create_notification(borrowing: Borrowing):
-    user = borrowing.user
-    book = borrowing.book
-    message = (
-        f"<b>New borrowing created!</b>\n"
-        f"User: {user.email}\n"
-        f"Book: {book.title} ({book.inventory - 1} left)\n"
-        f"Expected return date: {borrowing.expected_return_date}\n"
-    )
-    send_notification(message)
-
-
 def check_overdue_borrowings():
     today = datetime.date.today()
     logging.info(f"Checking overdue borrowings for date: {today}")
@@ -72,15 +60,9 @@ def check_overdue_borrowings():
                 f"Book: {borrowing.book.title}\n"
                 f"Expected return: {borrowing.expected_return_date}"
             )
-            logging.info(f"Sending notification: {message}")
             send_notification(message)
     else:
-        logging.info("No overdue borrowings found, sending no-overdue message")
         send_notification("📢 No borrowings overdue today!")
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hello! I'm your library bot.")
 
 
 @sync_to_async
@@ -88,100 +70,13 @@ def run_check():
     check_overdue_borrowings()
 
 
-async def handle_checkoverdue(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await run_check()
-    await update.message.reply_text("✅ Overdue books check sent to the admin.")
-
-
-async def getchatid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    await update.message.reply_text(f"Your chat ID is: {chat_id}")
-
-
-async def testchat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    await update.message.reply_text(f"Your chat id is {chat_id}")
-    global CHAT_ID
-    CHAT_ID = chat_id
-    logging.info(f"Chat ID set to {CHAT_ID}")
-
-
-async def hello(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hello from test command!")
-
-
-async def mybooks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    telegram_id = update.message.from_user.id
-    try:
-        user = await sync_to_async(User.objects.get)(telegram_id=telegram_id)
-    except User.DoesNotExist:
-        await update.message.reply_text(
-            "Sorry, you are not found in the system. Please register or contact the admin."
-        )
-        return
-
-    borrowings = await sync_to_async(
-        lambda: list(
-            Borrowing.objects.filter(user=user, actual_return_date__isnull=True).select_related("book")
-        )
-    )()
-
-    if not borrowings:
-        await update.message.reply_text("You have no borrowed books.")
-        return
-
-    response_text = "Your borrowed books:\n"
-    for borrowing in borrowings:
-        def is_paid(borrowing):
-            return Payment.objects.filter(
-                borrowing=borrowing,
-                type_field="PAYMENT",
-                status="PAID"
-            ).exists()
-
-        paid = await sync_to_async(is_paid)(borrowing)
-        paid_text = "paid" if paid else "not paid"
-        response_text += f"- {borrowing.book.title} (Payment status: {paid_text})\n"
-
-    await update.message.reply_text(response_text)
-
-
-async def fines(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    telegram_id = update.message.from_user.id
-    try:
-        user = await sync_to_async(User.objects.get)(telegram_id=telegram_id)
-    except User.DoesNotExist:
-        await update.message.reply_text(
-            "Sorry, you are not found in the system. Please register or contact the admin."
-        )
-        return
-
-    payments = await sync_to_async(
-        lambda: list(Payment.objects.filter(
-            borrowing__user=user,
-            type_field="FINE"
-        ).select_related("borrowing", "borrowing__book"))
-    )()
-
-    if not payments:
-        await update.message.reply_text("You have no fines.")
-        return
-
-    response_text = "Your fines:\n"
-    for payment in payments:
-        paid_text = "paid" if payment.status == "PAID" else "not paid"
-        response_text += f"- {payment.borrowing.book.title}: {payment.money_to_pay} USD ({paid_text})\n"
-
-    await update.message.reply_text(response_text)
-
-
-async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_user = update.message.from_user
     telegram_id = telegram_user.id
 
     if not context.args:
         await update.message.reply_text(
-            "Please use the command as:\n/register your_email@example.com"
+            "👋 Welcome! To log in, use:\n/start your_email@example.com"
         )
         return
 
@@ -191,24 +86,98 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = await sync_to_async(User.objects.get)(email=email)
         user.telegram_id = telegram_id
         await sync_to_async(user.save)()
-        await update.message.reply_text("✅ You have been registered successfully!")
+        await update.message.reply_text(f"✅ Login successful! Welcome, {user.email}.")
     except User.DoesNotExist:
         await update.message.reply_text(
-            "❌ No user found with email: {email}. Please contact the admin."
+            f"❌ No user found with email {email}. Please contact the administrator."
         )
+
+
+async def borrowings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    telegram_id = update.message.from_user.id
+    try:
+        user = await sync_to_async(User.objects.get)(telegram_id=telegram_id)
+    except User.DoesNotExist:
+        await update.message.reply_text(
+            "❌ You are not logged in. Please use /start your_email"
+        )
+        return
+
+    borrowings = await sync_to_async(
+        lambda: list(Borrowing.objects.filter(user=user).select_related("book"))
+    )()
+
+    if not borrowings:
+        await update.message.reply_text("📚 You have no borrowings.")
+        return
+
+    active_section = ""
+    all_section = "📖 Your borrowings:\n"
+
+    for borrowing in borrowings:
+        book = borrowing.book
+        is_returned = borrowing.actual_return_date is not None
+        paid = await sync_to_async(lambda: Payment.objects.filter(
+            borrowing=borrowing,
+            type_field="PAYMENT",
+            status="PAID"
+        ).exists())()
+        paid_text = "paid" if paid else "not paid"
+
+        if not is_returned:
+            active_section += (
+                "📌 <b>You have a new borrowing:</b>\n"
+                f"Book Title: {book.title}\n"
+                f"Author: {book.author}\n"
+                f"Expected return date: {borrowing.expected_return_date}\n"
+                f"Price per day: {book.daily_fee} USD\n\n"
+            )
+
+        all_section += (
+            f"- {book.title}\n"
+            f"  Return status: {'returned' if is_returned else 'not returned'}\n"
+            f"  Payment: {paid_text}\n\n"
+        )
+
+    message = (active_section + all_section).strip()
+    await update.message.reply_text(message, parse_mode="HTML")
+
+
+async def payments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    telegram_id = update.message.from_user.id
+    try:
+        user = await sync_to_async(User.objects.get)(telegram_id=telegram_id)
+    except User.DoesNotExist:
+        await update.message.reply_text(
+            "❌ You are not logged in. Please use /start your_email"
+        )
+        return
+
+    payments = await sync_to_async(
+        lambda: list(Payment.objects.filter(
+            borrowing__user=user,
+            type_field="PAYMENT",
+            status="PAID"
+        ).select_related("borrowing__book"))
+    )()
+
+    if not payments:
+        await update.message.reply_text("💸 You have no successful payments.")
+        return
+
+    response_text = "✅ Your successful payments:\n"
+    for payment in payments:
+        response_text += f"- {payment.borrowing.book.title}: {payment.money_to_pay} USD\n"
+
+    await update.message.reply_text(response_text)
 
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("checkoverdue", handle_checkoverdue))
-    app.add_handler(CommandHandler("getchatid", getchatid))
-    app.add_handler(CommandHandler("testchat", testchat))
-    app.add_handler(CommandHandler("hello", hello))
-    app.add_handler(CommandHandler("mybooks", mybooks))
-    app.add_handler(CommandHandler("fines", fines))
-    app.add_handler(CommandHandler("register", register))
+    app.add_handler(CommandHandler("borrowings", borrowings))
+    app.add_handler(CommandHandler("payments", payments))
 
     print("✅ All handlers registered. Bot is running...")
     app.run_polling()
